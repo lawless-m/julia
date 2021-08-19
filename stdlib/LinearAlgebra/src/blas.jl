@@ -701,13 +701,28 @@ for (fname, elty) in ((:dgemv_,:Float64),
                 throw(DimensionMismatch("the transpose of A has dimensions $n, $m, X has length $(length(X)) and Y has length $(length(Y))"))
             end
             chkstride1(A)
-            ccall((@blasfunc($fname), libblas), Cvoid,
+            lda = stride(A,2)
+            sX = stride(X,1)
+            sY = stride(Y,1)
+            if lda < 0
+                colindex = lastindex(A, 2)
+                lda = -lda
+                trans == 'N' ? (sX = -sX) : (sY = -sY)
+            else
+                colindex = firstindex(A, 2)
+            end
+            lda >= size(A,1) || size(A,2) <= 1 || error("when `size(A,2) > 1`, `abs(stride(A,2))` must be at least `size(A,1)`")
+            lda = max(1, size(A,1), lda)
+            pA = pointer(A, Base._sub2ind(A, 1, colindex))
+            pX = pointer(X, stride(X,1) > 0 ? firstindex(X) : lastindex(X))
+            pY = pointer(Y, stride(Y,1) > 0 ? firstindex(Y) : lastindex(Y))
+            GC.@preserve A X Y ccall((@blasfunc($fname), libblas), Cvoid,
                 (Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{$elty},
                  Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
                  Ref{$elty}, Ptr{$elty}, Ref{BlasInt}, Clong),
                  trans, size(A,1), size(A,2), alpha,
-                 A, max(1,stride(A,2)), X, stride(X,1),
-                 beta, Y, stride(Y,1), 1)
+                 pA, lda, pX, sX,
+                 beta, pY, sY, 1)
             Y
         end
         function gemv(trans::AbstractChar, alpha::($elty), A::AbstractMatrix{$elty}, X::AbstractVector{$elty})
